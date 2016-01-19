@@ -1,0 +1,171 @@
+[[tags: egg]]
+== forcible
+
+Thread- and exception aware, lazy-looking synchronization - extending
+srfi-45.
+
+[[toc:]]
+
+== Rationale
+
+{{Force}} and {{delay}} from CHICKEN core as well as SRFI-45 exhibit
+unintuitive behavior in the presence of SRFI-18 threads and when
+exceptions are raised.  The srfi-45 egg extends the srfi-45 reference
+implementation to support multiple values but is still unintuitive
+wrt. threads and exceptions.
+
+This egg builds and extends those, explicit aiming on the following
+objectives:
+
+* Explicit support for multiple value returns from suspended
+  expressions.
+
+* Aware of threads and exception handling.  Multiple threads
+  {{force}}ing the same {{promise}} do NOT cause multiple evaluation
+  of the {{delay}}ed (or {{lazy}}) expression.  The same thread may
+  still recurse into the {{promise}} being forced.
+
+* Bounded space as in srfi-45.
+
+* Extends {{force}} with optional parameters to simplify exception
+  handling.
+
+* {{Future}}s are syntactically similar to {{delay}} but evaluated in
+  another SRFI-18 thread.
+
+* Adds single use "awaitable" values ({{expectable}}).
+
+* Does NOT supplement CHICKEN's force/delay but replaces it.  (To
+  reduce confusion for developers.  Supplementing them as the srfi-45
+  egg does had caused too many confusion for the author of this egg at
+  least.)
+
+== Requirements
+
+None.
+
+Exception: The implementation of {{expectable}} currently (2016-01-10)
+depends on a CHICKEN having the fix for
+[[http://bugs.call-cc.org/ticket/1231|Ticket 1231]] applied.
+
+== API
+
+<procedure>(timeout-condition? x) -> boolean</procedure>
+
+Test x to be a timeout condition object.
+
+<procedure>(eager . vals) -> PROMISE</procedure>
+
+Returns a promise which, when {{force}}ed returns the values {{vals}}.
+
+<syntax>(lazy EXPRESSION) -> PROMISE</syntax>
+
+Returns a promise for {{EXPRESSION}}.
+
+<syntax>(delay EXPRESSION) -> PROMISE</syntax>
+
+Returns a promise, a delayed evaluation of {{EXPRESSION}}.
+
+<syntax>(delay/timeout TIMEOUT EXPRESSION) -> PROMISE</syntax>
+
+Same as {{delay EXPRESSION}}.  Promise may fail raising an object
+for which {{timeout-condition?}} returns {{#t}}.
+
+<syntax>(future EXPRESSION) -> PROMISE</syntax>
+
+Returns a promise, a delayed evaluation of {{EXPRESSION}}.  The
+evaluation of expression is started immediately in another thread.
+{{PROMISE}} will cache exceptions returned by {{EXPRSSION}}.
+
+<syntax>(future/timeout TIMEOUT EXPRESSION) -> PROMISE</syntax>
+
+Variation of {{future}}.  The evaluation of {{EXPRESSION}} receives an
+exceptions for which {{timeout-condition?}} holds after {{TIMEOUT}}.
+
+<syntax>(lazy-future EXPRESSION) -> PROMISE</syntax>
+
+Same as {{future}} however the thread is NOT started.  Use {{demand}}
+to start it prior to {{force}}.  Use of {{force}} will also start it
+if not {{demand}}ed before.
+
+<procedure>(demand PROMISE) -> boolean</procedure>
+
+If the {{PROMISE}} was created by {{lazy-future}} and the thread is
+not yet started, start it.  Returns {{#t}} if the thread was started only
+now, otherwise returns {{#f}}.
+
+<procedure>(force OBJECT [FAIL]) -> . *</procedure>
+
+Force {{OBJECT}}.  Returns {{OBJECT}} if it is NOT a promise.
+Otherwise returns the values the suspended {{EXPRESSION}} returned.
+
+If {{FAIL}} is provided it must be a procedure of one argument.
+Exceptions raised from the {{EXPRESSION}} are passed to {{FAIL}}.
+
+This is equivalent to
+ (handle-exceptions ex (FAIL ex) (force OBJECT))
+
+
+<procedure>(expectable [NAME] [THUNK]) -> PROCEDURE PROMISE</procedure>
+
+{{NAME}} is any object and used for debug purposes only (currently
+passed as name of an internal mutex).  Returns two values.
+{{PROCEDURE}} takes a flag indicating whether the {{PROMISE}} shall
+return successful (if {{#t}}) or fail and values to return from
+{{force}}ing the {{PROMISE}}.  If the flag is {{#f}} only the first of
+those values is used and passed to the exception handler as the
+exception raised from the {{PROMISE}}.
+
+When {{THUNK}} is given the resulting promise behaves like a promise
+created by {{lazy}}.
+
+=== Low Level
+
+<procedure>(fulfil! PROMISE TYPE . ARGS) -> boolean</procedure>
+
+Mutate {{PROMISE}} to be fulfilled.  {{TYPE}} must be a boolean.  If
+{{#t}} the {{PROMISE}} is set to return successfully the values
+{{ARGS}}.  If {{TYPE}} is {{#f}} the {{PROMISE}} will raise the first
+value of {{ARGS}} as exception.
+
+Note: This procedure MAY be removed in future versions (if it proves
+to be questionable).
+
+== About this egg
+
+=== Source
+
+Latest version:
+[[http://askemos.org/chicken-eggs/forcible/forcible.tar.gz|forcible from askemos.org]]
+
+=== Version History
+
+0.3: Added {{/timeout}}.
+
+0.2: Added optional {{THUNK}} to {{expectable}}.
+
+0.1: Initial version.
+
+=== Authors
+
+Jörg F. Wittenberger
+
+=== License
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the Software),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED ASIS, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.

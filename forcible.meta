@@ -1,0 +1,7 @@
+;; -*- mode: Scheme; -*-
+((category hell)
+ (license "BSD")
+ (author "Jörg F. Wittenberger")
+ (synopsis "Thread- and exception aware, lazy-looking synchronization - extending srfi-45")
+ (doc-from-wiki)
+ (files "forcible.meta" "forcible.setup" "forcible.scm"))
