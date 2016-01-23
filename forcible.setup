@@ -3,10 +3,10 @@
 (define opt-flags '(-O3 -lfa2 -d2 -no-trace -no-lambda-info))
 
 (compile -s ,@opt-flags -J -emit-type-file "forcible.types" "forcible.scm")
-(compile -c -O3 "forcible.scm" -unit forcible)
+(compile -c ,@opt-flags "forcible.scm" -unit forcible)
 (compile -s -O2 -d0 "forcible.import.scm")
 
 (install-extension
  'forcible
  '("forcible.types" "forcible.so" "forcible.import.so")
- '((version "0.3")))
+ '((version "0.3.4")))

@@ -1,7 +1,7 @@
 [[tags: egg]]
 == forcible
 
-Thread- and exception aware, lazy-looking synchronization - extending
+Thread- and exception aware, lazy-looking synchronization with timeout - extending
 srfi-45.
 
 [[toc:]]
@@ -33,6 +33,8 @@ objectives:
 * {{Future}}s are syntactically similar to {{delay}} but evaluated in
   another SRFI-18 thread.
 
+* Cheap timeouts.
+
 * Adds single use "awaitable" values ({{expectable}}).
 
 * Does NOT supplement CHICKEN's force/delay but replaces it.  (To
@@ -42,11 +44,19 @@ objectives:
 
 == Requirements
 
-None.
+Requires [[pigeon-hole]], [[llrb-tree]] for timeout handling.
 
-Exception: The implementation of {{expectable}} currently (2016-01-10)
+The implementation of {{expectable}} currently (2016-01-10)
 depends on a CHICKEN having the fix for
 [[http://bugs.call-cc.org/ticket/1231|Ticket 1231]] applied.
+
+== Timeouts
+
+Timeouts come at negligible runtime overhead – the cost of being
+coarse grained.  It is assumed that most timeouts never "fire" hence
+the are deferred for the sake of optimization.  Timeouts fire only if
+they are not canceled before at least a full {{timeout-period}}
+passed.  A {{timeout-period}} defaults to one second.
 
 == API
 
@@ -82,6 +92,18 @@ evaluation of expression is started immediately in another thread.
 Variation of {{future}}.  The evaluation of {{EXPRESSION}} receives an
 exceptions for which {{timeout-condition?}} holds after {{TIMEOUT}}.
 
+<syntax>(order EXPRESSION) -> PROMISE</syntax>
+
+Returns a promise, a delayed evaluation of {{EXPRESSION}}.  The
+evaluation of expression is ordered from another thread in a
+threadpool.  {{PROMISE}} will cache exceptions returned by
+{{EXPRSSION}}.
+
+<syntax>(order/timeout TIMEOUT EXPRESSION) -> PROMISE</syntax>
+
+Variation of {{order}}.  The evaluation of {{EXPRESSION}} receives an
+exceptions for which {{timeout-condition?}} holds after {{TIMEOUT}}.
+
 <syntax>(lazy-future EXPRESSION) -> PROMISE</syntax>
 
 Same as {{future}} however the thread is NOT started.  Use {{demand}}
@@ -102,7 +124,7 @@ Otherwise returns the values the suspended {{EXPRESSION}} returned.
 If {{FAIL}} is provided it must be a procedure of one argument.
 Exceptions raised from the {{EXPRESSION}} are passed to {{FAIL}}.
 
-This is equivalent to
+This is equivalent to (but more efficiently implemented)
  (handle-exceptions ex (FAIL ex) (force OBJECT))
 
 

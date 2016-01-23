@@ -1,4 +1,5 @@
 (use srfi-18)
+(require-library pigeon-hole llrb-tree)
 
 (declare
  (disable-interrupts) ;; alternative: use `hopefully` for the 'forcible' record
@@ -20,10 +21,12 @@
   (lazy make-lazy-promise)
   (delay make-delayed-promise)
   timeout-condition?
-  (delay/timeout make-delayed-promise make-delayed-promise/timeout-ex make-delayed-promise/timeout)
+  (delay/timeout make-delayed-promise make-delayed-promise/timeout-ex)
   (future make-future-promise)
   (future/timeout make-future-promise/timeout)
   (lazy-future make-lazy-future-promise)
+  (order make-order-promise)
+  (order/timeout make-order-promise)
   demand
   force
   fulfil!
@@ -32,12 +35,16 @@
  (import (except scheme force delay))
  (import (except chicken make-promise promise?))
  (import srfi-18)
+ (import (prefix pigeonry threadpool-))
+ (import llrb-tree)
 
 (define-record forcible-timeout)
 
 (define %forcible-timeout (make-forcible-timeout))
 
 (define (timeout-condition? x) (eq? x %forcible-timeout))
+
+(include "timeout.scm")
 
 (define-type :promise: (struct forcible))
 (: promise-box (:promise: -> pair))
@@ -59,8 +66,12 @@
   (syntax-rules ()
     ((_ exp) (make-lazy-promise (lambda () exp)))))
 
-(define (make-delayed-promise thunk)
+#;(define (make-delayed-promise thunk)
   (lazy (call-with-values thunk eager)))
+
+;; Manually inlined for speed.
+(define (make-delayed-promise thunk)
+  (make-promise (cons (make-mutex 'delayed) (lambda () (call-with-values thunk eager)))))
 
 (define-syntax delay
   (syntax-rules ()
@@ -91,25 +102,19 @@
     ((_ exp) (make-future-promise (lambda () exp)))))
 
 (define (make-future-promise/timeout thunk timeout)
-  (let* ((promise (make-promise (cons #f thunk)))
+  (let* ((p (cons #f thunk))
+	 (promise (make-promise p))
 	 (thread (make-thread
 		  (lambda ()
 		    (handle-exceptions
 		     ex (fulfil! promise #f ex)
-		     (let ((to (thread-start!
-				(let ((thread (current-thread)))
-				  (lambda ()
-				    (thread-sleep! timeout)
-				    (let ((state (thread-state thread)))
-				      (case state
-					((dead terminated))
-					(else (thread-signal! thread %forcible-timeout)))))))))
+		     (let ((to (register-timeout-message! timeout (current-thread))))
 		       (receive
 			results (thunk)
-			(thread-terminate! to)
+			(cancel-timeout-message! to)
 			(fulfil!* promise #t results)))))
 		  'future)))
-    (set-car! (promise-box promise) thread)
+    (set-car! p thread)
     (thread-start! thread)
     promise))
 
@@ -134,46 +139,9 @@
 	  #t)
 	#f)))
 
-(define-inline (register-promise-timeout! promise timeout thunk)
-  (mutex-specific-set!
-   (car (promise-box promise))
-   (make-thread
-    (lambda ()
-      (thread-sleep! timeout)
-      (handle-exceptions
-       ex (fulfil! promise #f ex)
-       (receive results (thunk) (fulfil!* promise #t results)))))))
-
-(define-inline (register-promise-timeout/safe! promise timeout thunk)
-  (mutex-specific-set!
-   (car (promise-box promise))
-   (make-thread
-    (lambda ()
-      (thread-sleep! timeout)
-      (thunk)))))
-
-(define-inline (start-promise-timeout! key)
-  (let ((t (mutex-specific key)))
-    (if (thread? t) (thread-start! t))))
-
-(define-inline (cancel-promise-timeout! key)
-  (let ((timeout (mutex-specific key)))
-    (if (thread? timeout) (thread-terminate! timeout))))
-
-(define-inline (cancel-future-timeout! key)
-  (let ((timeout (thread-specific key)))
-    (if (thread? timeout)
-	(begin
-	  (thread-terminate! timeout)
-	  (thread-specific-set! key #f)))))
-
-(define-inline (lock-promise-mutex! key)
-  (start-promise-timeout! key)
-  (mutex-lock! key))
-
 (define-inline (unlock-promise-mutex! key)
-  (mutex-unlock! key)
-  (cancel-promise-timeout! key))
+  #;(cancel-promise-timeout! key)
+  (mutex-unlock! key))
 
 (: fulfil!* (:promise: boolean list -> boolean))
 (define (fulfil!* promise type args)
@@ -196,40 +164,67 @@
 		  (&rest * (procedure (*) . *) -> (procedure (false *) boolean) :promise:)))
 (define (expectable . name+thunk)
   (let* ((thunk (and (pair? name+thunk) (pair? (cdr name+thunk)) (cadr name+thunk)))
-	 (mux (or thunk (make-mutex (if (pair? name+thunk) (car name+thunk) 'expectation))))
+	 (mux (or thunk (make-mutex 'service)))
 	 (promise (if thunk
 		      (make-delayed-promise thunk)
 		      (make-promise (list mux)))))
-    (or thunk (mutex-lock! mux #f #f))
+    (if (not thunk)
+	(mutex-lock! mux #f #f))
     (values
      (lambda (kind . args) (fulfil!* promise kind args))
      promise)))
 
-;; TBD: The timeout handling is rather stupid now.  Better one to
-;; come.
-(define (make-delayed-promise/timeout thunk timeout on-timeout);; WRONG
-  (let ((promise (make-delayed-promise thunk)))
-    (register-promise-timeout! promise timeout on-timeout)
-    promise))
+(define make-order-promise
+  (begin
+    (define poo-type
+      (threadpool-make-type
+       (lambda (promise ex) (fulfil! promise #f ex))
+       #f #;(lambda (root) #f)))
+    ;;(define (pileup promise thunk) (receive args (thunk) (fulfil!* promise #t args)))
+    (define (pileup promise) (receive args ((cadr (promise-box promise))) (fulfil!* promise #t args)))
+    (define (pileup/timeout promise timeout)
+      (let ((to (register-timeout-message! timeout ##sys#current-thread)))
+	(receive
+	 args ((cadr (promise-box promise)))
+	 (cancel-timeout-message! to)
+	 (fulfil!* promise #t args))))
+    ;; Pool is currently NOT REALLY limited.
+    (define pile (threadpool-make 'pile #t poo-type))
+    (define (sent-to-threadpool thunk timeout)
+      (let* ((mux (make-mutex 'service)) ;; Beware name triggers "no exception handler".
+	     (p (cons thunk '()))
+	     (content (cons mux p))
+	     (promise (make-promise content)))
+	(if timeout
+	    (threadpool-order! pile promise pileup/timeout (cons timeout '()))
+	    (threadpool-order! pile promise pileup '()))
+	(mutex-lock! mux #f #f)
+	promise))
+    sent-to-threadpool))
+
+(define-syntax order
+  (syntax-rules ()
+    ((_ exp) (make-order-promise (lambda () exp) #f))))
+
+(define-syntax order/timeout
+  (syntax-rules ()
+    ((_ exp) (make-order-promise (lambda () exp) #f))
+    ((_ to exp) (make-order-promise (lambda () exp) to))))
 
 (define (make-delayed-promise/timeout-ex thunk timeout)
-  (let ((promise (make-delayed-promise thunk)))
-    (register-promise-timeout/safe!
-     promise
-     timeout
-     (lambda ()
-       (and-let* ((key (car (promise-box promise)))
-		  (owner (mutex-state key))
-		  ((thread? owner)))
-		 (thread-signal! owner %forcible-timeout))))
-    promise))
+  (make-promise
+   (cons
+    (make-mutex 'delayed/timeout)
+    (lambda ()
+      (let* ((to (register-timeout-message! timeout ##sys#current-thread))
+	     (result (call-with-values thunk eager)))
+	(cancel-timeout-message! to)
+	result)))))
 
 (define-syntax delay/timeout
   (syntax-rules ()
     ((_ exp) (make-delayed-promise (lambda () exp)))
-    ((_ to exp) (make-delayed-promise/timeout-ex (lambda () exp) to))
-    #;((_ to exp then)
-     (make-delayed-promise/timeout (lambda () exp) to (lambda () then)))))
+    ((_ to exp) (make-delayed-promise/timeout-ex (lambda () exp) to))))
 
 (: force1! (:promise: -> :promise:))
 (define (force1! promise)
@@ -249,7 +244,9 @@
 	    (unlock-promise-mutex! key)
 	    (force1! promise))
 	  (begin
-	    (lock-promise-mutex! key)
+	    (mutex-lock! key)
+	    ;; Already done.  Don't abandon the mutex.  Avoid memory leak.
+	    (if (symbol? (car (promise-box promise))) (mutex-unlock! key))
 	    (force1! promise))))
      ((thread? key)
       (if (eq? (thread-state key) 'created) (thread-start! key))
@@ -267,17 +264,21 @@
 (define (force obj . fail)
   (if (promise? obj)
       (let* ((fh (and (pair? fail) (car fail)))
+	     (key (car (promise-box obj)))
 	     (result
 	      (cond
 	       ;; Result already available.
-	       ((symbol? (car (promise-box obj))) obj)
+	       ((symbol? key) obj)
+	       ;; As CHICKEN makes it hard to not catch exceptions in
+	       ;; threads we don't to so anymore.  Hence no exceptions here:
+	       ((thread? key) (force1! obj))
+	       ((and (mutex? key) (eq? (mutex-name key) 'service))
+		(force1! obj))
 	       ;; Backward compatible case does not cache exceptions.
 	       ((and (pair? fail) (not fh)) (force1! obj))
 	       (else (handle-exceptions
 		      ex
-		      (let ((ex (if (uncaught-exception? ex)
-				    (uncaught-exception-reason ex)
-				    ex)))
+		      (begin
 			(promise-box-set! obj (list 'failed ex))
 			obj)
 		      (force1! obj)))))

@@ -1,5 +1,6 @@
 forcible.meta
 forcible.setup
 forcible.scm
+timeout.scm
 tests/run.scm
 README

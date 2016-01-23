@@ -34,6 +34,15 @@
 ;; Exceptions in futures are delivered.
 (assert (eq? (force (future (raise 'fail)) (lambda (ex) (eq? ex 'fail))) #t))
 
+;; Test "order"
+(assert
+ (equal?
+  (call-with-values (lambda () (force (order/timeout (values 1 2)))) vector)
+  '#(1 2)))
+
+;; Exceptions from order are delivered.
+(assert (eq? (force (order/timeout (raise 'fail)) (lambda (ex) (eq? ex 'fail))) #t))
+
 ;; Check timeouts.
 (assert (eq? (force (delay/timeout 2 (begin (thread-sleep! 0.5) 1))) 1))
 (assert (force (delay/timeout 0.2 (begin (thread-sleep! 3) 'fail)) timeout-condition?))
@@ -41,7 +50,7 @@
 (assert (eq? (force (future/timeout 2 (begin (thread-sleep! 0.2) 1))) 1))
 (assert (eq? (force (future/timeout 0.2 (begin (thread-sleep! 3) 'fail)) timeout-condition?) #t))
 
-
+(assert (eq? (force (order/timeout 0.2 (begin (thread-sleep! 3) 'fail)) timeout-condition?) #t))
 
 ;;=========================================================================
 ;; Reentrancy test 2: from SRFI 40 (modified)
