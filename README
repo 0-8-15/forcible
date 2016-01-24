@@ -66,7 +66,7 @@ Test x to be a timeout condition object.
 
 <procedure>(eager . vals) -> PROMISE</procedure>
 
-Returns a promise which, when {{force}}ed returns the values {{vals}}.
+Returns a promise which, when {{force}}d returns the values {{vals}}.
 
 <syntax>(lazy EXPRESSION) -> PROMISE</syntax>
 
@@ -82,15 +82,23 @@ Same as {{delay EXPRESSION}}.  Promise may fail raising an object
 for which {{timeout-condition?}} returns {{#t}}.
 
 <syntax>(future EXPRESSION) -> PROMISE</syntax>
+<syntax>(&begin BODY ...) -> PROMISE</syntax>
 
 Returns a promise, a delayed evaluation of {{EXPRESSION}}.  The
 evaluation of expression is started immediately in another thread.
 {{PROMISE}} will cache exceptions returned by {{EXPRSSION}}.
 
+{{&begin}} is analogous to {{future}} with {{BODY ...}} wraped in
+{{begin}}.
+
 <syntax>(future/timeout TIMEOUT EXPRESSION) -> PROMISE</syntax>
+<syntax>(&begin/timeout TIMEOUT BODY ...) -> PROMISE</syntax>
 
 Variation of {{future}}.  The evaluation of {{EXPRESSION}} receives an
 exceptions for which {{timeout-condition?}} holds after {{TIMEOUT}}.
+
+{{&begin/timeout}} is the same as {{future/timeout}} with {{BODY ...}}
+waped in {{begin}}.
 
 <syntax>(order EXPRESSION) -> PROMISE</syntax>
 

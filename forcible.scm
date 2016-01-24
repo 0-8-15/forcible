@@ -24,6 +24,8 @@
   (delay/timeout make-delayed-promise make-delayed-promise/timeout-ex)
   (future make-future-promise)
   (future/timeout make-future-promise/timeout)
+  (&begin make-future-promise)
+  (&begin/timeout make-future-promise/timeout)
   (lazy-future make-lazy-future-promise)
   (order make-order-promise)
   (order/timeout make-order-promise)
@@ -101,6 +103,10 @@
   (syntax-rules ()
     ((_ exp) (make-future-promise (lambda () exp)))))
 
+(define-syntax &begin
+  (syntax-rules ()
+    ((_ body ...) (make-future-promise (lambda () body ...)))))
+
 (define (make-future-promise/timeout thunk timeout)
   (let* ((p (cons #f thunk))
 	 (promise (make-promise p))
@@ -121,6 +127,10 @@
 (define-syntax future/timeout
   (syntax-rules ()
     ((_ to exp) (make-future-promise/timeout (lambda () exp) to))))
+
+(define-syntax &begin/timeout
+  (syntax-rules ()
+    ((_ to body ...) (make-future-promise/timeout (lambda () body ...) to))))
 
 (define (make-lazy-future-promise thunk)
   (let ((thread (make-thread thunk 'future)))
