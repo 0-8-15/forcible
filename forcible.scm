@@ -16,7 +16,7 @@
 
 (module
  forcible
- (
+ (promise?
   eager
   (lazy make-lazy-promise)
   (delay make-delayed-promise)
@@ -290,6 +290,8 @@
 		      ex
 		      (begin
 			(promise-box-set! obj (list 'failed ex))
+			;; avoid memory leak / abandoned mutex
+			(and (mutex? key) (mutex-unlock! key))
 			obj)
 		      (force1! obj)))))
 	     (content (promise-box result)))
