@@ -9,4 +9,4 @@
 (install-extension
  'forcible
  '("forcible.types" "forcible.so" "forcible.import.so")
- '((version "0.3.5")))
+ '((version "0.3.7")))

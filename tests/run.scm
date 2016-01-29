@@ -1,6 +1,16 @@
 (use chicken srfi-18 extras ports)
 (use forcible)
 
+(use lolevel)
+
+;; Bail out if we abandon a mutex.
+(mutate-procedure!
+ ##sys#thread-kill!
+ (lambda (o)
+   (lambda (t s)
+     (assert (null? (##sys#slot t 8)))
+     (o t s))))
+
 (module
  test
  *
@@ -191,7 +201,8 @@
       (force x (lambda (ex) (display ex)))))
   "\nGoing to raise\ndon't be lazy!\ndon't be lazy!\n"))
 
-
+;; Check that we will not abandon any mutex.
+(assert (null? (##sys#slot (current-thread) 8)))
 
 (define (loop) (lazy (loop)))
 ;(force (loop))
