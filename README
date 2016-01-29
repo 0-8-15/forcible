@@ -1,7 +1,7 @@
 [[tags: egg]]
 == forcible
 
-Thread- and exception aware, lazy-looking synchronization with timeout - extending
+Thread- and exception aware, lazy-looking synchronization with timeouts - extending
 srfi-45.
 
 [[toc:]]
@@ -169,6 +169,8 @@ Latest version:
 [[http://askemos.org/chicken-eggs/forcible/forcible.tar.gz|forcible from askemos.org]]
 
 === Version History
+
+0.3.6: Fix implementation wrt. execution in bounded space.
 
 0.3: Added {{/timeout}}.
 

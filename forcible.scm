@@ -243,21 +243,14 @@
     (cond
      ((symbol? key) promise)
      ((mutex? key)
-      (if (eq? (mutex-state key) (current-thread))
-	  (let* ((promise* ((cdr content)))        
-		 (content  (promise-box promise))) ; * 
-	    (if (not (eq? (car content) 'eager))   ; *
-		(let ((content* (promise-box promise*)))
-		  (set-car! content (car content*))
-		  (set-cdr! content (cdr content*))
-		  (promise-box-set! promise* content)))
-	    (unlock-promise-mutex! key)
-	    (force1! promise))
-	  (begin
-	    (mutex-lock! key)
-	    ;; Already done.  Don't abandon the mutex.  Avoid memory leak.
-	    (if (symbol? (car (promise-box promise))) (mutex-unlock! key))
-	    (force1! promise))))
+      (let* ((promise* ((cdr content)))        
+	     (content  (promise-box promise))) ; * 
+	(if (not (eq? (car content) 'eager))   ; *
+	    (let ((content* (promise-box promise*)))
+	      (set-car! content (car content*))
+	      (set-cdr! content (cdr content*))
+	      (promise-box-set! promise* content)))
+	(force1! promise)))
      ((thread? key)
       (if (eq? (thread-state key) 'created) (thread-start! key))
       (receive
@@ -282,18 +275,30 @@
 	       ;; As CHICKEN makes it hard to not catch exceptions in
 	       ;; threads we don't to so anymore.  Hence no exceptions here:
 	       ((thread? key) (force1! obj))
-	       ((and (mutex? key) (eq? (mutex-name key) 'service))
+	       #;((and (mutex? key) (eq? (mutex-name key) 'service))
 		(force1! obj))
 	       ;; Backward compatible case does not cache exceptions.
 	       ((and (pair? fail) (not fh)) (force1! obj))
-	       (else (handle-exceptions
-		      ex
-		      (begin
-			(promise-box-set! obj (list 'failed ex))
-			;; avoid memory leak / abandoned mutex
-			(and (mutex? key) (mutex-unlock! key))
-			obj)
-		      (force1! obj)))))
+	       (else
+		(if (eq? (mutex-state key) (current-thread))
+		    (force1! obj)
+		    (begin
+		      (mutex-lock! key)
+		      ;; Already done.  Don't abandon the mutex.  Avoid memory leak.
+		      (if (or (symbol? (car (promise-box obj)))
+			      (eq? (mutex-name key) 'service))
+			  (begin
+			    (mutex-unlock! key)
+			    obj)
+			  (let ((result
+				 (handle-exceptions
+				  ex
+				  (begin
+				    (promise-box-set! obj (list 'failed ex))
+				    obj)
+				  (force1! obj))))
+			    (unlock-promise-mutex! key)
+			    result)))) )))
 	     (content (promise-box result)))
 	(if (eq? (car content) 'eager)
 	    (apply values (cdr content))
