@@ -93,6 +93,32 @@
   "HiOnce"))
                ;===> Should display 'HiOnce once
 
+(define r (delay (begin (display 'HiOnce) 1)))
+(define s (lazy r))
+(define t (lazy s))
+
+(assert
+ (equal?
+  (with-output-to-string
+    (lambda ()
+      (force t)
+      (force r)))
+  "HiOnce"))
+
+;; Repeat multithreaded
+
+(define r (delay (begin (thread-sleep! 0.1) (display 'HiOnce) 1)))
+(define s (lazy r))
+(define t (lazy s))
+
+(assert
+ (equal?
+  (with-output-to-string
+    (lambda ()
+      (future (force t))
+      (force (future (force r)))))
+  "HiOnce"))
+
 ;=========================================================================
 ; Memoization test 4: Stream memoization 
 
