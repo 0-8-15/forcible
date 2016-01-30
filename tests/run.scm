@@ -24,10 +24,13 @@
 
 (define (dbg l v) (format (current-error-port) "D ~a ~s\n" l v) v)
 
-(define-values (s r) (expectable 'later))
- 
 ;;(display "Testing expectation\n" (current-error-port))
+(define-values (s r) (expectable 'later))
 (future (begin (thread-sleep! 0.2) (s #t 42)))
+(assert (force r) 42)
+
+(define-values (s r) (expectable 'later))
+(future (begin (thread-sleep! 0.2) (s #t (delay/timeout 1 42))))
 (assert (force r) 42)
 
 (assert
