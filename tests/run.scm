@@ -140,6 +140,23 @@
   "HiOnce"))
                ;===> Should display 'HiOnce once
 
+;; Test memoization of exceptions in recursive case with timeouts
+
+(define r (delay/timeout 3 (begin (thread-sleep! 0.1) (display 'HiException) (thread-sleep! 0.1) (raise 'Goodby))))
+
+(define s (delay/timeout 2 r))
+(define t (delay/timeout 2 s))
+
+(assert
+ (equal?
+  (with-output-to-string
+    (lambda ()
+      (force t identity)
+      (force r identity)
+      (force s identity)))
+  "HiException"))
+               ;===> Should display 'HiException once
+
 ;=========================================================================
 ; Memoization test 4: Stream memoization 
 

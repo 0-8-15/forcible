@@ -309,11 +309,11 @@
 			  (begin
 			    (mutex-unlock! key)
 			    obj)
-			  (let ((last (promise-box obj)) (tmo '()))
+			  (let ((last (promise-box obj)) (tmo #f))
 			    (handle-exceptions
 			     ex
 			     (let ((result (list 'failed ex)))
-			       (for-each cancel-timeout-message! tmo)
+			       (if tmo (cancel-timeout-message! tmo))
 			       (promise-box-set! obj result)
 			       (if (not (eq? last (promise-box obj)))
 				   (let ((lastkey (car last)))
@@ -326,7 +326,7 @@
 			       obj)
 			     (let ((top (lambda (p t)
 					  (if p (set! last p))
-					  (if t (set! tmo (cons t tmo))))))
+					  (if t (set! tmo t)))))
 			       (mutex-specific-set! key top)
 			       (force1! obj top))))))) )))
 	     (content (promise-box result)))
