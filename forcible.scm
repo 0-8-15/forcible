@@ -228,20 +228,23 @@
 
 (define (make-delayed-promise/timeout-ex thunk timeout)
   (make-promise
-   (cons
-    (make-mutex 'delayed/timeout)
-    (lambda ()
-      (let* ((to (register-timeout-message! timeout ##sys#current-thread))
-	     (result (call-with-values thunk eager)))
-	(cancel-timeout-message! to)
-	result)))))
+   (let ((mux (make-mutex 'delayed/timeout)))
+     (cons
+      mux
+      (lambda ()
+	(let* ((to (register-timeout-message! timeout ##sys#current-thread))
+	       (result (begin
+			 ((mutex-specific mux) #f to)
+			 (call-with-values thunk eager))))
+	  (cancel-timeout-message! to)
+	  result))))))
 
 (define-syntax delay/timeout
   (syntax-rules ()
     ((_ exp) (make-delayed-promise (lambda () exp)))
     ((_ to exp) (make-delayed-promise/timeout-ex (lambda () exp) to))))
 
-(: force1! (:promise: (or false (procedure (*) undefined)) -> :promise:))
+(: force1! (:promise: (or false (procedure (* *) undefined)) -> :promise:))
 (define (force1! promise top)
   (let loop ((promise promise))
     (let* ((content (promise-box promise))
@@ -264,7 +267,9 @@
 	      ;; Already done.  Don't abandon the mutex.  Avoid memory leak.
 	      (if (symbol? (car (promise-box promise)))
 		  (mutex-unlock! key)
-		  (top (promise-box promise)))
+		  (begin
+		    (mutex-specific-set! key top)
+		    (top (promise-box promise) #f)))
 	      (loop promise))))
        ((thread? key)
 	(if (eq? (thread-state key) 'created) (thread-start! key))
@@ -304,10 +309,11 @@
 			  (begin
 			    (mutex-unlock! key)
 			    obj)
-			  (let ((last (promise-box obj)))
+			  (let ((last (promise-box obj)) (tmo '()))
 			    (handle-exceptions
 			     ex
 			     (let ((result (list 'failed ex)))
+			       (for-each cancel-timeout-message! tmo)
 			       (promise-box-set! obj result)
 			       (if (not (eq? last (promise-box obj)))
 				   (let ((lastkey (car last)))
@@ -318,7 +324,11 @@
 				      (mutex-unlock! lastkey))))
 			       (unlock-promise-mutex! key)
 			       obj)
-			     (force1! obj (lambda (b) (set! last b)))))))) )))
+			     (let ((top (lambda (p t)
+					  (if p (set! last p))
+					  (if t (set! tmo (cons t tmo))))))
+			       (mutex-specific-set! key top)
+			       (force1! obj top))))))) )))
 	     (content (promise-box result)))
 	(if (eq? (car content) 'eager)
 	    (apply values (cdr content))
