@@ -149,10 +149,13 @@
 	  #t)
 	#f)))
 
-(define (unlock-promise-mutex! key)
+(define-inline (unlock-promise-mutex! key)
   #;(cancel-promise-timeout! key)
-  (let ((s (mutex-specific key)))
-    (if (mutex? s) (unlock-promise-mutex! s)))
+  #;(assert (eq? (mutex-state (dbg (current-thread) key)) (current-thread)))
+  (mutex-unlock! key))
+
+(define-inline (unlock-other-promise-mutex! key)
+  #;(cancel-promise-timeout! key)
   (mutex-unlock! key))
 
 (: fulfil!* (:promise: boolean list -> boolean))
@@ -164,7 +167,7 @@
 	  (set-cdr! content args)
 	  (set-car! content (if type 'eager 'failed))
 	  (cond
-	   ((mutex? key) (unlock-promise-mutex! key))
+	   ((mutex? key) (unlock-other-promise-mutex! key))
 	   ;; TBD: handle futures too.
 	   )
 	  #t))))
@@ -238,40 +241,42 @@
     ((_ exp) (make-delayed-promise (lambda () exp)))
     ((_ to exp) (make-delayed-promise/timeout-ex (lambda () exp) to))))
 
-(: force1! (:promise: -> :promise:))
-(define (force1! promise)
-  (let* ((content (promise-box promise))
-	 (key (car content)))
-    (cond
-     ((symbol? key) promise)
-     ((mutex? key)
-      (if (eq? (mutex-state key) (current-thread))
-	  (let* ((promise* ((cdr content)))        
-		 (content  (promise-box promise))) ; * 
-	    (if (not (eq? (car content) 'eager))   ; *
-		(let ((content* (promise-box promise*)))
-		  (let ((x (car content*)))
-		    (mutex-specific-set! key x) ; should we keep this only here?
-		    (set-car! content x))
-		  (set-cdr! content (cdr content*))
-		  (promise-box-set! promise* content)))
-	    (force1! promise))
-	  (begin
-	    (mutex-lock! key)
-	    ;; Already done.  Don't abandon the mutex.  Avoid memory leak.
-	    (if (symbol? (car (promise-box promise))) (mutex-unlock! key))
-	    (force1! promise))))
-     ((thread? key)
-      (if (eq? (thread-state key) 'created) (thread-start! key))
-      (receive
-       vals (thread-join! key)
-       (let ((content (promise-box promise)))
-	 (if (not (symbol? (car content)))
-	     (begin
-	       (set-car! content 'eager)
-	       (set-cdr! content vals))))
-       (force1! promise)))
-     (else (error "forcible: unknown promise kind" key)))))
+(: force1! (:promise: (or false (procedure (*) undefined)) -> :promise:))
+(define (force1! promise top)
+  (let loop ((promise promise))
+    (let* ((content (promise-box promise))
+	   (key (car content)))
+      (cond
+       ((symbol? key) promise)
+       ((mutex? key)
+	(if (eq? (mutex-state key) (current-thread))
+	    (let* ((promise* ((cdr content)))        
+		   (content  (promise-box promise))) ; * 
+	      (if (not (eq? (car content) 'eager))   ; *
+		  (let ((content* (promise-box promise*)))
+		    (set-car! content (car content*))
+		    (set-cdr! content (cdr content*))
+		    (promise-box-set! promise* content)
+		    (unlock-promise-mutex! key)))
+	      (loop promise))
+	    (begin
+	      (mutex-lock! key)
+	      ;; Already done.  Don't abandon the mutex.  Avoid memory leak.
+	      (if (symbol? (car (promise-box promise)))
+		  (mutex-unlock! key)
+		  (top (promise-box promise)))
+	      (loop promise))))
+       ((thread? key)
+	(if (eq? (thread-state key) 'created) (thread-start! key))
+	(receive
+	 vals (thread-join! key)
+	 (let ((content (promise-box promise)))
+	   (if (not (symbol? (car content)))
+	       (begin
+		 (set-car! content 'eager)
+		 (set-cdr! content vals))))
+	 (loop promise)))
+       (else (error "forcible: unknown promise kind" key))))))
 
 (: force (* &optional (or (procedure (*) . *) false) -> . *))
 (define (force obj . fail)
@@ -284,12 +289,13 @@
 	       ((symbol? key) obj)
 	       ;; As CHICKEN makes it hard to not catch exceptions in
 	       ;; threads we don't to so anymore.  Hence no exceptions here:
-	       ((thread? key) (force1! obj))
+	       ((thread? key) (force1! obj #f))
 	       ;; Backward compatible case does not cache exceptions.
-	       ((and (pair? fail) (not fh)) (force1! obj))
+	       ((and (pair? fail) (not fh))
+		(force1! obj (and (mutex? key) (mutex-specific key))))
 	       (else
 		(if (eq? (mutex-state key) (current-thread))
-		    (force1! obj)
+		    (force1! obj (mutex-specific key))
 		    (begin
 		      (mutex-lock! key)
 		      (if (or (symbol? (car (promise-box obj)))
@@ -298,15 +304,21 @@
 			  (begin
 			    (mutex-unlock! key)
 			    obj)
-			  (let ((result
-				 (handle-exceptions
-				  ex
-				  (begin
-				    (promise-box-set! obj (list 'failed ex))
-				    obj)
-				  (force1! obj))))
-			    (unlock-promise-mutex! key)
-			    result)))) )))
+			  (let ((last (promise-box obj)))
+			    (handle-exceptions
+			     ex
+			     (let ((result (list 'failed ex)))
+			       (promise-box-set! obj result)
+			       (if (not (eq? last (promise-box obj)))
+				   (let ((lastkey (car last)))
+				     (when
+				      (not (eq? lastkey key))
+				      (set-cdr! last result)
+				      (set-car! last 'failed)
+				      (mutex-unlock! lastkey))))
+			       (unlock-promise-mutex! key)
+			       obj)
+			     (force1! obj (lambda (b) (set! last b)))))))) )))
 	     (content (promise-box result)))
 	(if (eq? (car content) 'eager)
 	    (apply values (cdr content))

@@ -170,7 +170,10 @@ Latest version:
 
 === Version History
 
-0.3.6: Fix implementation wrt. execution in bounded space.
+0.3.8: Bugfix.
+
+0.3.6: Attempted fix implementation wrt. execution in bounded space
+actally creating a leak.
 
 0.3: Added {{/timeout}}.
 

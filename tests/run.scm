@@ -3,12 +3,15 @@
 
 (use lolevel)
 
-;; Bail out if we abandon a mutex.
+(define tests-failed #f)
+
 (mutate-procedure!
  ##sys#thread-kill!
  (lambda (o)
    (lambda (t s)
-     (assert (null? (##sys#slot t 8)))
+     (when (pair? (##sys#slot t 8))
+	   (set! tests-failed #t)
+	   (format (current-error-port) "=== Thread ~a abandons ~a\n" t (##sys#slot t 8)))
      (o t s))))
 
 (module
@@ -116,24 +119,24 @@
     (lambda ()
       (let ((a (future (force t))))
 	(force (future (force r)))
-	(force a)))))
+	(force a))))
   "HiOnce"))
                ;===> Should display 'HiOnce once
 
 ;; Test memoization of exceptions in recursive case
-(dbg 'TRec '3c)
+
 (define r (delay (begin (thread-sleep! 0.1) (display 'HiOnce) (raise 'Goodby))))
 (define s (lazy r))
 (define t (lazy s))
 
 (assert
  (equal?
-  (dbg 'Seen (with-output-to-string
+  (with-output-to-string
     (lambda ()
       (let ((a (future (force t))))
 	(force (future (force r)) identity)
 	(force a identity)
-	(force s identity)))))
+	(force s identity))))
   "HiOnce"))
                ;===> Should display 'HiOnce once
 
@@ -217,3 +220,6 @@
 
 
 )
+
+
+(assert (not tests-failed))
