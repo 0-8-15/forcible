@@ -84,7 +84,8 @@
     (thread-start! thread)
     (make-promise (cons thread thunk))))
 
-(define (make-future-promise thunk)
+
+(define (make-future-promise* thunk started)
   (let* ((p (cons #f thunk))
 	 (promise (make-promise p))
 	 (thread (make-thread
@@ -96,8 +97,10 @@
 		      (fulfil!* promise #t results))))
 		  'future)))
     (set-car! p thread)
-    (thread-start! thread)
+    (if started (thread-start! thread))
     promise))
+
+(define (make-future-promise thunk) (make-future-promise* thunk #t))
 
 (define-syntax future
   (syntax-rules ()
@@ -132,9 +135,7 @@
   (syntax-rules ()
     ((_ to body ...) (make-future-promise/timeout (lambda () body ...) to))))
 
-(define (make-lazy-future-promise thunk)
-  (let ((thread (make-thread thunk 'future)))
-    (make-promise (cons thread thunk))))
+(define (make-lazy-future-promise thunk) (make-future-promise* thunk #f))
 
 (define-syntax lazy-future
   (syntax-rules ()
@@ -164,8 +165,15 @@
 	 (key (car content)))
     (if (symbol? key) #f
 	(begin
-	  (set-cdr! content args)
-	  (set-car! content (if type 'eager 'failed))
+	  (cond
+	   ((and type (pair? args) (promise? (car args)))
+	    (let ((nc (promise-box (car args))))
+	      (set-cdr! content (cdr nc))
+	      (set-car! content (car nc))
+	      #;(promise-box-set! (car args) content)))
+	   (else
+	    (set-cdr! content args)
+	    (set-car! content (if type 'eager 'failed))))
 	  (cond
 	   ((mutex? key) (unlock-other-promise-mutex! key))
 	   ;; TBD: handle futures too.
@@ -273,14 +281,8 @@
 	      (loop promise))))
        ((thread? key)
 	(if (eq? (thread-state key) 'created) (thread-start! key))
-	(receive
-	 vals (thread-join! key)
-	 (let ((content (promise-box promise)))
-	   (if (not (symbol? (car content)))
-	       (begin
-		 (set-car! content 'eager)
-		 (set-cdr! content vals))))
-	 (loop promise)))
+	(thread-join! key)
+	promise)
        (else (error "forcible: unknown promise kind" key))))))
 
 (: force (* &optional (or (procedure (*) . *) false) -> . *))
@@ -330,10 +332,13 @@
 			       (mutex-specific-set! key top)
 			       (force1! obj top))))))) )))
 	     (content (promise-box result)))
-	(if (eq? (car content) 'eager)
-	    (apply values (cdr content))
-	    (let ((ex (cadr content)))
-	      (if (procedure? fh) (fh ex) (raise ex)))))
+	(let ((key (car content)))
+	  (if (eq? key 'eager)
+	      (apply values (cdr content))
+	      (if (eq? key 'failed)
+		  (let ((ex (cadr content)))
+		    (if (procedure? fh) (fh ex) (raise ex)))
+		  (apply force result fail)))))
       obj))
 
 )
