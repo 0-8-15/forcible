@@ -16,6 +16,7 @@
  *
  (import (except scheme force delay))
  (import chicken srfi-18 ports extras)
+ (import (only data-structures identity))
  (import forcible)
 
 (define (dbg l v) (format (current-error-port) "D ~a ~s\n" l v) v)
@@ -103,18 +104,6 @@
   "HiOnce"))
                ;===> Should display 'HiOnce once
 
-(define r (delay (begin (display 'HiOnce) 1)))
-(define s (lazy r))
-(define t (lazy s))
-
-(assert
- (equal?
-  (with-output-to-string
-    (lambda ()
-      (force t)
-      (force r)))
-  "HiOnce"))
-
 ;; Repeat multithreaded
 
 (define r (delay (begin (thread-sleep! 0.1) (display 'HiOnce) 1)))
@@ -125,9 +114,28 @@
  (equal?
   (with-output-to-string
     (lambda ()
-      (future (force t))
-      (force (future (force r)))))
+      (let ((a (future (force t))))
+	(force (future (force r)))
+	(force a)))))
   "HiOnce"))
+               ;===> Should display 'HiOnce once
+
+;; Test memoization of exceptions in recursive case
+(dbg 'TRec '3c)
+(define r (delay (begin (thread-sleep! 0.1) (display 'HiOnce) (raise 'Goodby))))
+(define s (lazy r))
+(define t (lazy s))
+
+(assert
+ (equal?
+  (dbg 'Seen (with-output-to-string
+    (lambda ()
+      (let ((a (future (force t))))
+	(force (future (force r)) identity)
+	(force a identity)
+	(force s identity)))))
+  "HiOnce"))
+               ;===> Should display 'HiOnce once
 
 ;=========================================================================
 ; Memoization test 4: Stream memoization 
