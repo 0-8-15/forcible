@@ -33,6 +33,10 @@
 (future (begin (thread-sleep! 0.2) (s #t (delay/timeout 1 42))))
 (assert (force r) 42)
 
+(define-values (s r) (expectable 'later))
+(future (s #t (delay (values 7 6))))
+(assert (force r raise vector) '#(7 6))
+
 (assert
  (equal?
   (call-with-values (lambda () (force (delay (values 1 2)))) vector)
@@ -42,6 +46,11 @@
  (equal?
   (call-with-values (lambda () (force (future (values 1 2)))) vector)
   '#(1 2)))
+
+(assert
+ (equal?
+  (call-with-values (lambda () (force (future (delay (values 17 23))))) vector)
+  '#(17 23)))
 
 (assert
  (equal?

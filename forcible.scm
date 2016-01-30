@@ -19,6 +19,7 @@
  (promise?
   eager
   (lazy make-lazy-promise)
+  (lazy/timeout make-lazy-promise make-lazy-promise/timeout-ex)
   (delay make-delayed-promise)
   timeout-condition?
   (delay/timeout make-delayed-promise make-delayed-promise/timeout-ex)
@@ -234,6 +235,24 @@
     ((_ exp) (make-order-promise (lambda () exp) #f))
     ((_ to exp) (make-order-promise (lambda () exp) to))))
 
+(define (make-lazy-promise/timeout-ex thunk timeout)
+  (make-promise
+   (let ((mux (make-mutex 'lazy/timeout)))
+     (cons
+      mux
+      (lambda ()
+	(let* ((to (register-timeout-message! timeout ##sys#current-thread))
+	       (result (begin
+			 ((mutex-specific mux) #f to)
+			 (call-with-values thunk list))))
+	  (cancel-timeout-message! to)
+	  (apply values result)))))))
+
+(define-syntax lazy/timeout
+  (syntax-rules ()
+    ((_ exp) (make-lazy-promise (lambda () exp)))
+    ((_ to exp) (make-lazy-promise/timeout-ex (lambda () exp) to))))
+
 (define (make-delayed-promise/timeout-ex thunk timeout)
   (make-promise
    (let ((mux (make-mutex 'delayed/timeout)))
@@ -334,7 +353,13 @@
 	     (content (promise-box result)))
 	(let ((key (car content)))
 	  (if (eq? key 'eager)
-	      (apply values (cdr content))
+	      (apply
+	       (or
+		(and-let*
+		 (((pair? fail)) (s (cdr fail)) ((pair? s)))
+		 (car s))
+		values)
+	       (cdr content))
 	      (if (eq? key 'failed)
 		  (let ((ex (cadr content)))
 		    (if (procedure? fh) (fh ex) (raise ex)))
