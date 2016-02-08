@@ -1,5 +1,5 @@
 (use srfi-18)
-(require-library pigeon-hole llrb-tree)
+(require-library pigeon-hole llrb-tree lolevel)
 
 (declare
  (disable-interrupts) ;; alternative: use `hopefully` for the 'forcible' record
@@ -12,14 +12,50 @@
  (specialize)
  (strict-types)
 
- )
+(foreign-declare #<<EOF
+void C_ccall C_make_vector(C_word c, C_word *av)
+{
+  C_word av2[2], *v=av+1;
+  av2[0] = av[1];
+  *v = C_VECTOR_TYPE | (c-2);
+  av2[1] = (C_word) v;
+  C_do_apply(2, av2);
+}
+
+void C_ccall C_make_structureX(C_word c, C_word *av)
+{
+  C_word av2[2], *v=av+1;
+  av2[0] = av[1];
+  *v = C_STRUCTURE_TYPE | (c-2);
+  av2[1] = (C_word) v;
+  C_do_apply(2, av2);
+}
+
+void C_ccall C_apply_vector(C_word c, C_word *av)
+{
+  C_word *av2, k, f, *v, sz;
+
+  k=av[1]; f=av[2], v=(C_word *)(av[3]); sz=C_header_size(v);
+  if(!C_demand(2+sz))
+    C_save_and_reclaim((void *)C_apply_vector, c, av);
+  av2=C_alloc((2+sz) *sizeof(C_word));
+  av2[0]=f;
+  av2[1]=k;
+  C_memcpy(av2+2, v+1, sz * sizeof(C_word));
+  C_do_apply(2+sz, av2);
+}
+
+EOF
+
+)
+)
 
 (module
  forcible
  (promise?
   eager
   (lazy make-lazy-promise)
-  (lazy/timeout make-lazy-promise make-lazy-promise/timeout-ex)
+  (lazy/timeout make-lazy-promise make-lazy-promise/timeout)
   (delay make-delayed-promise)
   timeout-condition?
   (delay/timeout make-delayed-promise make-delayed-promise/timeout-ex)
@@ -34,12 +70,53 @@
   force
   fulfil!
   expectable
+  ;;
+  apply-vector
   )
  (import (except scheme force delay))
- (import (except chicken make-promise promise?))
+ (import (except chicken make-promise promise? with-exception-handler))
  (import srfi-18)
  (import (prefix pigeonry threadpool-))
  (import llrb-tree)
+
+ 
+(import (only lolevel mutate-procedure!)) ;; do NOT cond-expand to avoid rebuilds
+(cond-expand
+ (overwrite-dynamic-wind
+
+  (define overwrite.vector (##core#primitive "C_make_vector"))
+  (define make-struct (##core#primitive "C_make_structureX"))
+
+  (define apply-vector/unsafe (##core#primitive "C_apply_vector"))
+  (define (apply-vector f v)
+    (##sys#check-vector v 'apply-vector)
+    (apply-vector/unsafe f v))
+
+  (define ##sys#apply-vector apply-vector)
+
+  (define (overwrite.dynamic-wind before thunk after)
+    (before)
+    (set! ##sys#dynamic-winds (cons (cons before after) ##sys#dynamic-winds))
+    (let ((results (##sys#call-with-values thunk overwrite.vector)))
+      (set! ##sys#dynamic-winds (##sys#slot ##sys#dynamic-winds 1))
+      (after)
+      #;(if (eq? (##sys#size results) 1) (##sys#slot results 0) (apply-vector/unsafe values results))
+      (apply-vector/unsafe values results)
+      ) )
+
+  ;;(mutate-procedure! vector (lambda (ignored) overwrite.vector))
+  ;;(mutate-procedure! ##sys#make-structure (lambda (ignored) make-struct))
+  ;;(mutate-procedure! dynamic-wind (lambda (ignored) overwrite.dynamic-wind))
+  (define %catch-values overwrite.vector)
+  (define-inline (%apply-to-intercepted f i) (apply-vector/unsafe f i))
+
+  )
+ (else
+  (define %catch-values list)
+  (define-inline (%apply-to-intercepted f i) (apply f i))
+  (define (apply-vector f v) (apply f (vector->list v)))
+  ))
+
 
 (define-record forcible-timeout)
 
@@ -59,11 +136,25 @@
   (box promise-box promise-box-set!))
 
 (: eager (&rest -> :promise:))
-(define (eager . vals)
-  (make-promise (cons 'eager vals)))
+(cond-expand
+ (overwrite-dynamic-wind
+  (define (eager . vals)
+    (make-promise (cons 'eager (list->vector vals)))))
+ (else
+  (define (eager . vals)
+    (make-promise (cons 'eager vals)))))
+
+#;(define (make-lazy-promise thunk)
+  (make-promise (cons (make-mutex) thunk)))
 
 (define (make-lazy-promise thunk)
-  (make-promise (cons (make-mutex) thunk)))
+  (make-promise
+   (cons
+    (make-mutex)
+    (lambda ()
+      (let ((p (thunk)))
+	(if (promise? p) p
+	    (error "missuse of lazy" p)))))))
 
 (define-syntax lazy
   (syntax-rules ()
@@ -74,7 +165,10 @@
 
 ;; Manually inlined for speed.
 (define (make-delayed-promise thunk)
-  (make-promise (cons (make-mutex 'delayed) (lambda () (call-with-values thunk eager)))))
+  (make-promise
+   (cons (make-mutex 'delayed)
+	 (lambda ()
+	   (make-promise (cons 'eager (call-with-values thunk %catch-values)))))))
 
 (define-syntax delay
   (syntax-rules ()
@@ -93,9 +187,7 @@
 		  (lambda ()
 		    (handle-exceptions
 		     ex (fulfil! promise #f ex)
-		     (receive
-		      results (thunk)
-		      (fulfil!* promise #t results))))
+		     (fulfil!* promise #t (call-with-values thunk %catch-values))))
 		  'future)))
     (set-car! p thread)
     (if started (thread-start! thread))
@@ -119,10 +211,9 @@
 		    (handle-exceptions
 		     ex (fulfil! promise #f ex)
 		     (let ((to (register-timeout-message! timeout (current-thread))))
-		       (receive
-			results (thunk)
-			(cancel-timeout-message! to)
-			(fulfil!* promise #t results)))))
+		       (let ((results (call-with-values thunk %catch-values)))
+			 (cancel-timeout-message! to)
+			 (fulfil!* promise #t results)))))
 		  'future)))
     (set-car! p thread)
     (thread-start! thread)
@@ -144,6 +235,7 @@
 
 (: demand (:promise: -> boolean))
 (define (demand promise)
+  (if (not (promise? promise)) (error "demand: not a promise" promise))
   (let ((key (car (promise-box promise))))
     (if (and (thread? key) (eq? (thread-state key) 'created))
 	(begin
@@ -160,7 +252,7 @@
   #;(cancel-promise-timeout! key)
   (mutex-unlock! key))
 
-(: fulfil!* (:promise: boolean list -> boolean))
+(: fulfil!* (:promise: boolean * -> boolean))
 (define (fulfil!* promise type args)
   (let* ((content (promise-box promise))
 	 (key (car content)))
@@ -169,6 +261,12 @@
 	  (cond
 	   ((and type (pair? args) (promise? (car args)))
 	    (let ((nc (promise-box (car args))))
+	      (set-cdr! content (cdr nc))
+	      (set-car! content (car nc))
+	      #;(promise-box-set! (car args) content)))
+	   ((and type (vector? args) (eq? (vector-length args) 1) (promise? (vector-ref args 0)))
+	    #;(display "Forcible has seen the interesting case\n" (current-error-port))
+	    (let ((nc (promise-box (vector-ref args 0))))
 	      (set-cdr! content (cdr nc))
 	      (set-car! content (car nc))
 	      #;(promise-box-set! (car args) content)))
@@ -189,13 +287,15 @@
 (define (expectable . name+thunk)
   (let* ((thunk (and (pair? name+thunk) (pair? (cdr name+thunk)) (cadr name+thunk)))
 	 (mux (or thunk (make-mutex 'service)))
-	 (promise (if thunk
+	 (promise (if (procedure? thunk)
 		      (make-delayed-promise thunk)
 		      (make-promise (list mux)))))
     (if (not thunk)
 	(mutex-lock! mux #f #f))
     (values
-     (lambda (kind . args) (fulfil!* promise kind args))
+     (lambda (kind . args) (fulfil!* promise kind (cond-expand
+						   (overwrite-dynamic-wind (list->vector args))
+						   (else args))))
      promise)))
 
 (define make-order-promise
@@ -205,13 +305,12 @@
        (lambda (promise ex) (fulfil! promise #f ex))
        #f #;(lambda (root) #f)))
     ;;(define (pileup promise thunk) (receive args (thunk) (fulfil!* promise #t args)))
-    (define (pileup promise) (receive args ((cadr (promise-box promise))) (fulfil!* promise #t args)))
+    (define (pileup promise) (fulfil!* promise #t (call-with-values (cadr (promise-box promise)) %catch-values)))
     (define (pileup/timeout promise timeout)
       (let ((to (register-timeout-message! timeout ##sys#current-thread)))
-	(receive
-	 args ((cadr (promise-box promise)))
-	 (cancel-timeout-message! to)
-	 (fulfil!* promise #t args))))
+	(let ((args (call-with-values (cadr (promise-box promise)) %catch-values)))
+	  (cancel-timeout-message! to)
+	  (fulfil!* promise #t args))))
     ;; Pool is currently NOT REALLY limited.
     (define pile (threadpool-make 'pile #t poo-type))
     (define (sent-to-threadpool thunk timeout)
@@ -235,7 +334,7 @@
     ((_ exp) (make-order-promise (lambda () exp) #f))
     ((_ to exp) (make-order-promise (lambda () exp) to))))
 
-(define (make-lazy-promise/timeout-ex thunk timeout)
+(define (make-lazy-promise/timeout thunk timeout)
   (make-promise
    (let ((mux (make-mutex 'lazy/timeout)))
      (cons
@@ -244,14 +343,17 @@
 	(let* ((to (register-timeout-message! timeout ##sys#current-thread))
 	       (result (begin
 			 ((mutex-specific mux) #f to)
-			 (call-with-values thunk list))))
+			 ;;(call-with-values thunk %catch-values)
+			 (thunk))))
 	  (cancel-timeout-message! to)
-	  (apply values result)))))))
+	  ;;(%apply-to-intercepted values result)
+	  (if (promise? result) result
+	      (error "missuse of lazy/timeout" result))))))))
 
 (define-syntax lazy/timeout
   (syntax-rules ()
     ((_ exp) (make-lazy-promise (lambda () exp)))
-    ((_ to exp) (make-lazy-promise/timeout-ex (lambda () exp) to))))
+    ((_ to exp) (make-lazy-promise/timeout (lambda () exp) to))))
 
 (define (make-delayed-promise/timeout-ex thunk timeout)
   (make-promise
@@ -262,9 +364,9 @@
 	(let* ((to (register-timeout-message! timeout ##sys#current-thread))
 	       (result (begin
 			 ((mutex-specific mux) #f to)
-			 (call-with-values thunk eager))))
+			 (call-with-values thunk %catch-values))))
 	  (cancel-timeout-message! to)
-	  result))))))
+	  (make-promise (cons 'eager result))))))))
 
 (define-syntax delay/timeout
   (syntax-rules ()
@@ -304,10 +406,10 @@
 	promise)
        (else (error "forcible: unknown promise kind" key))))))
 
-(: force (* &optional (or (procedure (*) . *) false) -> . *))
-(define (force obj . fail)
+(: force (* &optional (or (procedure (*) . *) false) procedure -> . *))
+(define (force obj #!optional (fh raise) (success values))
   (if (promise? obj)
-      (let* ((fh (and (pair? fail) (car fail)))
+      (let* (#;(fh (and (pair? fail) (car fail)))
 	     (key (car (promise-box obj)))
 	     (result
 	      (cond
@@ -317,7 +419,7 @@
 	       ;; threads we don't to so anymore.  Hence no exceptions here:
 	       ((thread? key) (force1! obj #f))
 	       ;; Backward compatible case does not cache exceptions.
-	       ((and (pair? fail) (not fh))
+	       #;((and (pair? fail) (not fh))
 		(force1! obj (and (mutex? key) (mutex-specific key))))
 	       (else
 		(if (eq? (mutex-state key) (current-thread))
@@ -342,7 +444,7 @@
 				      (not (eq? lastkey key))
 				      (set-cdr! last result)
 				      (set-car! last 'failed)
-				      (mutex-unlock! lastkey))))
+				      (if (mutex? lastkey) (mutex-unlock! lastkey)))))
 			       (unlock-promise-mutex! key)
 			       obj)
 			     (let ((top (lambda (p t)
@@ -353,17 +455,12 @@
 	     (content (promise-box result)))
 	(let ((key (car content)))
 	  (if (eq? key 'eager)
-	      (apply
-	       (or
-		(and-let*
-		 (((pair? fail)) (s (cdr fail)) ((pair? s)))
-		 (car s))
-		values)
-	       (cdr content))
+	      (%apply-to-intercepted success (cdr content))
 	      (if (eq? key 'failed)
 		  (let ((ex (cadr content)))
 		    (if (procedure? fh) (fh ex) (raise ex)))
-		  (apply force result fail)))))
+		  #;(apply force result fail)
+		  (force result fh success)))))
       obj))
 
 )

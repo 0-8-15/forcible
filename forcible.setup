@@ -1,6 +1,6 @@
 ;; -*-Scheme-*-
 
-(define opt-flags '(-O3 -lfa2 -d2 -no-trace -no-lambda-info))
+(define opt-flags '(-O4 -lfa2 -d2 -no-trace -no-lambda-info))
 
 (compile -s ,@opt-flags -J -emit-type-file "forcible.types" "forcible.scm")
 (compile -c ,@opt-flags "forcible.scm" -unit forcible)
