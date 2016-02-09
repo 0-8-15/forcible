@@ -259,17 +259,17 @@ EOF
     (if (symbol? key) #f
 	(begin
 	  (cond
-	   ((and type (pair? args) (promise? (car args)))
-	    (let ((nc (promise-box (car args))))
+	   ((and #;type (pair? args) (promise? (car args)))
+	    (let* ((p* (car args)) (nc (promise-box p*)))
 	      (set-cdr! content (cdr nc))
 	      (set-car! content (car nc))
-	      #;(promise-box-set! (car args) content)))
-	   ((and type (vector? args) (eq? (vector-length args) 1) (promise? (vector-ref args 0)))
+	      (promise-box-set! p* content)))
+	   ((and #;type (vector? args) (eq? (vector-length args) 1) (promise? (vector-ref args 0)))
 	    #;(display "Forcible has seen the interesting case\n" (current-error-port))
-	    (let ((nc (promise-box (vector-ref args 0))))
+	    (let* ((p* (vector-ref args 0)) (nc (promise-box p*)))
 	      (set-cdr! content (cdr nc))
 	      (set-car! content (car nc))
-	      #;(promise-box-set! (car args) content)))
+	      (promise-box-set! p* content)))
 	   (else
 	    (set-cdr! content args)
 	    (set-car! content (if type 'eager 'failed))))

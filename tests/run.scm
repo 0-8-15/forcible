@@ -33,6 +33,9 @@
 (future (begin (thread-sleep! 0.2) (s #t (delay/timeout 1 42))))
 (assert (force r) 42)
 
+(assert (eq? (force (order (order 1))) 1))
+(assert (eq? (force (future (future 2))) 2))
+
 (define-values (s r) (expectable 'later))
 (future (s #t (delay (values 7 6))))
 (assert (force r raise vector) '#(7 6))
