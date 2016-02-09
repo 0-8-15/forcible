@@ -30,7 +30,7 @@ objectives:
 * Extends {{force}} with optional parameters to simplify exception
   handling.
 
-* {{Future}}s are syntactically similar to {{delay}} but evaluated in
+* {{Future}}s are syntactically similar to {{lazy}} but evaluated in
   another SRFI-18 thread.
 
 * Cheap timeouts.
