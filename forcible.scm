@@ -1,5 +1,7 @@
-(use srfi-18)
-(require-library pigeon-hole llrb-tree lolevel)
+
+(cond-expand
+ (chicken-4 (require-library srfi-18 pigeon-hole llrb-tree lolevel))
+ (else ))
 
 (declare
  (disable-interrupts) ;; alternative: use `hopefully` for the 'forcible' record
@@ -74,13 +76,25 @@ EOF
   apply-vector
   )
  (import (except scheme force delay))
- (import (except chicken make-promise promise? with-exception-handler))
+ (cond-expand
+  (chicken-4
+   (import (except chicken make-promise promise? with-exception-handler)))
+  (else
+   (import
+    (chicken type)
+    (except (chicken base) make-promise promise?)
+    srfi-12
+    (chicken time))))
  (import srfi-18)
  (import (prefix pigeonry threadpool-))
  (import llrb-tree)
 
  
-(import (only lolevel mutate-procedure!)) ;; do NOT cond-expand to avoid rebuilds
+(cond-expand
+ ;; USED TO SAY: do NOT cond-expand to avoid rebuilds
+ ;; Have to deal with chicken versions
+ (chicken-4 (import (only lolevel mutate-procedure!)))
+ (else ))
 (cond-expand
  (overwrite-dynamic-wind
 
@@ -299,8 +313,8 @@ EOF
      promise)))
 
 (define make-order-promise
-  (begin
-    (define poo-type
+  (let ()
+    (define pool-type
       (threadpool-make-type
        (lambda (promise ex) (fulfil! promise #f ex))
        #f #;(lambda (root) #f)))
@@ -312,7 +326,7 @@ EOF
 	  (cancel-timeout-message! to)
 	  (fulfil!* promise #t args))))
     ;; Pool is currently NOT REALLY limited.
-    (define pile (threadpool-make 'pile #t poo-type))
+    (define pile (threadpool-make 'pile #t pool-type))
     (define (sent-to-threadpool thunk timeout)
       (let* ((mux (make-mutex 'service)) ;; Beware name triggers "no exception handler".
 	     (p (cons thunk '()))

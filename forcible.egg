@@ -1,0 +1,16 @@
+;; -*- mode: Scheme; -*-
+((category hell)
+ (license "BSD")
+ (author "Jörg F. Wittenberger")
+ (version "0.3.9")
+ (synopsis "Thread- and exception aware, lazy-looking synchronization with timeouts - extending srfi-45")
+ (dependencies
+  srfi-18
+  (pigeon-hole "0.2.3")
+  llrb-tree)
+ (distribution-files "forcible.egg" "forcible.meta" "forcible.setup" "forcible.scm" "timeout.scm")
+ (components
+  (extension
+   forcible
+   (types-file)
+   (csc-options -O4 -lfa2 -d2 -clustering -no-trace -no-lambda-info))))

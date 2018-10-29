@@ -1,25 +1,44 @@
-(use chicken srfi-18 extras ports)
-(use forcible)
+(cond-expand
+ (chicken-4
+  (require-library chicken srfi-18 extras ports)
+  (require-library forcible))
+ (else))
 
-(use lolevel)
+(module
+ catch-thread-kill
+ *
+ (import scheme)
+ (cond-expand
+  (chicken-4 (import chicken) (use lolevel extras))
+  (else
+   (import (chicken base) (chicken format))
+   (import (only srfi-18)) ;; only ##sys#thread-kill! - which is not exported
+   (import (chicken memory representation))))
 
-(define tests-failed #f)
+ (define tests-failed #f)
 
-(mutate-procedure!
+ (mutate-procedure!
  ##sys#thread-kill!
  (lambda (o)
    (lambda (t s)
      (when (pair? (##sys#slot t 8))
 	   (set! tests-failed #t)
 	   (format (current-error-port) "=== Thread ~a abandons ~a\n" t (##sys#slot t 8)))
-     (o t s))))
+     (o t s)))))
 
 (module
- test
+ forcible-tests
  *
  (import (except scheme force delay))
- (import chicken srfi-18 ports extras)
- (import (only data-structures identity))
+ (cond-expand
+  (chicken-4
+   (import (except chicken promise?) srfi-18 ports extras)
+   (import (only data-structures identity)))
+  (else
+   (import
+    (chicken base)
+    (chicken port)
+    srfi-18 srfi-28)))
  (import forcible)
 
 (define (dbg l v) (format (current-error-port) "D ~a ~s\n" l v) v)
@@ -253,5 +272,5 @@
 
 )
 
-
+(import catch-thread-kill)
 (assert (not tests-failed))
