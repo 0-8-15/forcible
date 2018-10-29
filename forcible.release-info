@@ -1,0 +1,4 @@
+(repo git "git://github.com/0-8-15/{egg-name}.git")
+(uri targz "https://codeload.github.com/0-8-15/{egg-name}/tar.gz/CHICKEN-{egg-release}")
+(release "0.2.3")
+
