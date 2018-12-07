@@ -4,5 +4,5 @@
  (author "Jörg F. Wittenberger")
  (synopsis "Thread- and exception aware, lazy-looking synchronization with timeouts - extending srfi-45")
  (doc-from-wiki)
- (needs (pigeon-hole "0.2.2") llrb-tree)
- (files "forcible.meta" "forcible.setup" "forcible.scm" "timeout.scm"))
+ (needs pigeon-hole simple-timer)
+ (files "forcible.meta" "forcible.setup" "forcible.scm"))

@@ -1,6 +1,6 @@
 
 (cond-expand
- (chicken-4 (require-library srfi-18 pigeon-hole llrb-tree lolevel))
+ (chicken-4 (require-library srfi-18 pigeon-hole pigeonry simple-timer lolevel))
  (else ))
 
 (declare
@@ -87,8 +87,7 @@ EOF
     (chicken time))))
  (import srfi-18)
  (import (prefix pigeonry threadpool-))
- (import llrb-tree)
-
+ (import simple-timer)
  
 (cond-expand
  ;; USED TO SAY: do NOT cond-expand to avoid rebuilds
@@ -132,13 +131,9 @@ EOF
   ))
 
 
-(define-record forcible-timeout)
-
-(define %forcible-timeout (make-forcible-timeout))
-
-(define (timeout-condition? x) (eq? x %forcible-timeout))
-
-(include "timeout.scm")
+(define timeout-condition? timer-condition?) ; obsolete but affects documented API
+(define register-timeout-message! register-timer-task!)
+(define cancel-timeout-message! cancel-timer-task!)
 
 (define-type :promise: (struct forcible))
 (: promise-box (:promise: -> pair))
@@ -446,7 +441,9 @@ EOF
 			  (begin
 			    (mutex-unlock! key)
 			    obj)
-			  (let ((last (promise-box obj)) (tmo #f))
+			  (let ((last (promise-box obj))
+				;; avoid 'tmo' to be optimized away
+				(tmo (the (or false pair) #f)))
 			    (handle-exceptions
 			     ex
 			     (let ((result (list 'failed ex)))

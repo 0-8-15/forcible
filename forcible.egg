@@ -7,8 +7,8 @@
  (dependencies
   srfi-18
   (pigeon-hole "0.2.3")
-  llrb-tree)
- (distribution-files "forcible.egg" "forcible.meta" "forcible.setup" "forcible.scm" "timeout.scm")
+  simple-timer)
+ (distribution-files "forcible.egg" "forcible.meta" "forcible.setup" "forcible.scm")
  (components
   (extension
    forcible
