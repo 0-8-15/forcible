@@ -170,7 +170,7 @@ Latest version:
 
 === Version History
 
-0.3.9: Factor out and use simple-timer.
+0.3.9: Ported to CHICKEN 5 and factor out and use simple-timer.
 
 0.3.8: Bugfix.
 
