@@ -13,43 +13,6 @@
  (safe-globals)
  (specialize)
  (strict-types)
-
-(foreign-declare #<<EOF
-void C_ccall C_make_vector(C_word c, C_word *av)
-{
-  C_word av2[2], *v=av+1;
-  av2[0] = av[1];
-  *v = C_VECTOR_TYPE | (c-2);
-  av2[1] = (C_word) v;
-  C_do_apply(2, av2);
-}
-
-void C_ccall C_make_structureX(C_word c, C_word *av)
-{
-  C_word av2[2], *v=av+1;
-  av2[0] = av[1];
-  *v = C_STRUCTURE_TYPE | (c-2);
-  av2[1] = (C_word) v;
-  C_do_apply(2, av2);
-}
-
-void C_ccall C_apply_vector(C_word c, C_word *av)
-{
-  C_word *av2, k, f, *v, sz;
-
-  k=av[1]; f=av[2], v=(C_word *)(av[3]); sz=C_header_size(v);
-  if(!C_demand(2+sz))
-    C_save_and_reclaim((void *)C_apply_vector, c, av);
-  av2=C_alloc((2+sz) *sizeof(C_word));
-  av2[0]=f;
-  av2[1]=k;
-  C_memcpy(av2+2, v+1, sz * sizeof(C_word));
-  C_do_apply(2+sz, av2);
-}
-
-EOF
-
-)
 )
 
 (module
@@ -72,8 +35,6 @@ EOF
   force
   fulfil!
   expectable
-  ;;
-  apply-vector
   )
  (import (except scheme force delay))
  (cond-expand
@@ -88,48 +49,9 @@ EOF
  (import srfi-18)
  (import (prefix pigeonry threadpool-))
  (import simple-timer)
- 
-(cond-expand
- ;; USED TO SAY: do NOT cond-expand to avoid rebuilds
- ;; Have to deal with chicken versions
- (chicken-4 (import (only lolevel mutate-procedure!)))
- (else ))
-(cond-expand
- (overwrite-dynamic-wind
 
-  (define overwrite.vector (##core#primitive "C_make_vector"))
-  (define make-struct (##core#primitive "C_make_structureX"))
-
-  (define apply-vector/unsafe (##core#primitive "C_apply_vector"))
-  (define (apply-vector f v)
-    (##sys#check-vector v 'apply-vector)
-    (apply-vector/unsafe f v))
-
-  (define ##sys#apply-vector apply-vector)
-
-  (define (overwrite.dynamic-wind before thunk after)
-    (before)
-    (set! ##sys#dynamic-winds (cons (cons before after) ##sys#dynamic-winds))
-    (let ((results (##sys#call-with-values thunk overwrite.vector)))
-      (set! ##sys#dynamic-winds (##sys#slot ##sys#dynamic-winds 1))
-      (after)
-      #;(if (eq? (##sys#size results) 1) (##sys#slot results 0) (apply-vector/unsafe values results))
-      (apply-vector/unsafe values results)
-      ) )
-
-  ;;(mutate-procedure! vector (lambda (ignored) overwrite.vector))
-  ;;(mutate-procedure! ##sys#make-structure (lambda (ignored) make-struct))
-  ;;(mutate-procedure! dynamic-wind (lambda (ignored) overwrite.dynamic-wind))
-  (define %catch-values overwrite.vector)
-  (define-inline (%apply-to-intercepted f i) (apply-vector/unsafe f i))
-
-  )
- (else
-  (define %catch-values list)
-  (define-inline (%apply-to-intercepted f i) (apply f i))
-  (define (apply-vector f v) (apply f (vector->list v)))
-  ))
-
+(define %catch-values list)
+(define-inline (%apply-to-intercepted f i) (apply f i))
 
 (define timeout-condition? timer-condition?) ; obsolete but affects documented API
 (define register-timeout-message! register-timer-task!)
