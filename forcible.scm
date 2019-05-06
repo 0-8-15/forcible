@@ -57,16 +57,16 @@
 (define register-timeout-message! register-timer-task!)
 (define cancel-timeout-message! cancel-timer-task!)
 
-(define-type :promise: (struct forcible))
-(: promise-box (:promise: -> pair))
-(: promise-box-set! (:promise: pair -> *))
-(: promise? (* --> boolean : :promise:))
+(define-type |:promise:| (struct forcible))
+(: promise-box (|:promise:| -> pair))
+(: promise-box-set! (|:promise:| pair -> *))
+(: promise? (* --> boolean : |:promise:|))
 (define-record-type forcible
   (make-promise box)
   promise?
   (box promise-box promise-box-set!))
 
-(: eager (&rest -> :promise:))
+(: eager (&rest -> |:promise:|))
 (cond-expand
  (overwrite-dynamic-wind
   (define (eager . vals)
@@ -164,7 +164,7 @@
   (syntax-rules ()
     ((_ exp) (make-lazy-future-promise (lambda () exp)))))
 
-(: demand (:promise: -> boolean))
+(: demand (|:promise:| -> boolean))
 (define (demand promise)
   (if (not (promise? promise)) (error "demand: not a promise" promise))
   (let ((key (car (promise-box promise))))
@@ -183,7 +183,7 @@
   #;(cancel-promise-timeout! key)
   (mutex-unlock! key))
 
-(: fulfil!* (:promise: boolean * -> boolean))
+(: fulfil!* (|:promise:| boolean * -> boolean))
 (define (fulfil!* promise type args)
   (let* ((content (promise-box promise))
 	 (key (car content)))
@@ -210,11 +210,11 @@
 	   )
 	  #t))))
 
-(: fulfil! (:promise: boolean &rest -> boolean))
+(: fulfil! (|:promise:| boolean &rest -> boolean))
 (define (fulfil! promise type . args) (fulfil!* promise type args))
 
-(: expectable (or (&rest * (procedure (*) . *) -> (procedure (true &rest) boolean) :promise:)
-		  (&rest * (procedure (*) . *) -> (procedure (false *) boolean) :promise:)))
+(: expectable (or (&rest * (procedure (*) . *) -> (procedure (true &rest) boolean) |:promise:|)
+		  (&rest * (procedure (*) . *) -> (procedure (false *) boolean) |:promise:|)))
 (define (expectable . name+thunk)
   (let* ((thunk (and (pair? name+thunk) (pair? (cdr name+thunk)) (cadr name+thunk)))
 	 (mux (or thunk (make-mutex 'service)))
@@ -304,7 +304,7 @@
     ((_ exp) (make-delayed-promise (lambda () exp)))
     ((_ to exp) (make-delayed-promise/timeout-ex (lambda () exp) to))))
 
-(: force1! (:promise: (or false (procedure (* *) undefined)) -> :promise:))
+(: force1! (|:promise:| (or false (procedure (* *) undefined)) -> |:promise:|))
 (define (force1! promise top)
   (let loop ((promise promise))
     (let* ((content (promise-box promise))
